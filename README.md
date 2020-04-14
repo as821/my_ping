@@ -15,4 +15,4 @@
 * "-c"  followed by the number of ICMP packets to send.
 * "-s"  followed by the number of seconds to delay between sending ICMP packets
 * "-t"  followed by the TTL value for the ICMP packets (only works with IPv4)
-*       final positional argument is the hostname or address to ping
+* final positional argument is the hostname or address to ping
