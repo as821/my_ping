@@ -49,7 +49,8 @@ struct argument_info {      // for passing relevant information to message-sendi
 };
 
 pthread_mutex_t socket_lock = PTHREAD_MUTEX_INITIALIZER;    // must be accessible in all functions
-pthread_mutex_t pack_counter_loc = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t pack_counter_lock = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t ping_count_lock = PTHREAD_MUTEX_INITIALIZER;
 bool debug = false, verbose = false, force_ipv6 = false, ttl_set = false, set_pings = false;    // commandline option selection
 double avg_rtt = 0, num_pac = 0, num_pac_sent = 0;          // diagnostic information accessed by multiple threads
 int sec_delay = 1, num_pings = 0;                           // set on command line
@@ -262,15 +263,17 @@ int main(int argc, char** argv) {
             rtt = func(recv_buf, n_bytes, &tv, addr);               // read tv from packet and calculate RTT
             if ( rtt > 0 ) {
                 // for signal handler output
-                pthread_mutex_lock(&pack_counter_loc);
+                pthread_mutex_lock(&pack_counter_lock);
                 avg_rtt += rtt;
-                pthread_mutex_unlock(&pack_counter_loc);
+                pthread_mutex_unlock(&pack_counter_lock);
             }
 
             // check if there are more pings to send
+            pthread_mutex_lock(&ping_count_lock);
             if ( set_pings && num_pings == 0 ) {
                 raise(SIGINT);      // if all pings have been sent, end program and output statistics
             }
+            pthread_mutex_unlock(&ping_count_lock);
         }
     }
 
@@ -313,9 +316,9 @@ float interpret_v6(char* buf, ssize_t len, struct timeval* tv_recv, char* dest) 
             return 0;     // invalid ICMP data size
         }
 
-        pthread_mutex_lock(&pack_counter_loc);
+        pthread_mutex_lock(&pack_counter_lock);
         num_pac++;      // a packet was received successfully
-        pthread_mutex_unlock(&pack_counter_loc);
+        pthread_mutex_unlock(&pack_counter_lock);
 
         // subtract timeval structs and store result in tv_recv
         char* helper = buf + 1; // point to front of data section (header is one bytes long)
@@ -335,10 +338,10 @@ float interpret_v6(char* buf, ssize_t len, struct timeval* tv_recv, char* dest) 
 
         // calculate packet loss and output relevant information
         double loss = 0;
-        pthread_mutex_lock(&pack_counter_loc);
+        pthread_mutex_lock(&pack_counter_lock);
         if (num_pac_sent > 1)      // avoids issue on first packet sent
             loss = 1-num_pac/num_pac_sent;
-        pthread_mutex_unlock(&pack_counter_loc);
+        pthread_mutex_unlock(&pack_counter_lock);
         printf("%d bytes received from %s: rtt=%.3f ms, loss: %.2f\n", (int) len, dest, rtt, loss);
     }
     return rtt;
@@ -383,9 +386,9 @@ void* proto6(void* arg) {
         }
         pthread_mutex_unlock(&socket_lock);
 
-        pthread_mutex_lock(&pack_counter_loc);
+        pthread_mutex_lock(&pack_counter_lock);
         num_pac_sent++;     // a packet was received successfully
-        pthread_mutex_unlock(&pack_counter_loc);
+        pthread_mutex_unlock(&pack_counter_lock);
 
         if ( debug ) {     // output raw packet contents
             printf("\nSent ICMPv6: type: %x, code: %x, id: %x, seq: %x\n", icmp6->icmp6_type, icmp6->icmp6_code,
@@ -398,12 +401,14 @@ void* proto6(void* arg) {
         }
 
         // update number of pings left to send
+        pthread_mutex_lock(&ping_count_lock);
         if ( set_pings && num_pings > 0 ) {
             num_pings--;
             if ( num_pings == 0 ) {
                 break;
             }
         }
+        pthread_mutex_unlock(&ping_count_lock);
 
         // wait specified number of seconds
         sleep(sec_delay);
@@ -452,9 +457,9 @@ float interpret_v4(char* buf, ssize_t len, struct timeval* tv_recv, char* dest) 
         if ( icmplen < 16 )
             return 0;     // invalid size for this program
         tv_sent = (struct timeval*) icmp_pack->icmp_data;
-        pthread_mutex_lock(&pack_counter_loc);
+        pthread_mutex_lock(&pack_counter_lock);
         num_pac++;
-        pthread_mutex_unlock(&pack_counter_loc);
+        pthread_mutex_unlock(&pack_counter_lock);
 
         // subtract timeval structs and store result in tv_recv
         if ( debug ) {     // output raw contents of timeval struct to help with debugging
@@ -472,10 +477,10 @@ float interpret_v4(char* buf, ssize_t len, struct timeval* tv_recv, char* dest) 
 
         // calculate packet loss and output
         double loss = 0;
-        pthread_mutex_lock(&pack_counter_loc);
+        pthread_mutex_lock(&pack_counter_lock);
         if ( num_pac_sent != 0 )      // avoids issue on first packet sent
             loss = 1-num_pac/num_pac_sent;
-        pthread_mutex_unlock(&pack_counter_loc);
+        pthread_mutex_unlock(&pack_counter_lock);
         printf("%d bytes received from %s: rtt=%.3f ms, loss rate: %.2f\n", icmplen, dest, rtt, loss);
 
     }
@@ -533,9 +538,9 @@ void* proto4(void* arg) {
         }
         pthread_mutex_unlock(&socket_lock);
 
-        pthread_mutex_lock(&pack_counter_loc);
+        pthread_mutex_lock(&pack_counter_lock);
         num_pac_sent++;     // packet sent successfully
-        pthread_mutex_unlock(&pack_counter_loc);
+        pthread_mutex_unlock(&pack_counter_lock);
 
         if ( debug ) {     // output raw contents of ICMP packet to help with debugging
             printf("\nSent ICMPv4: type: %x, code: %x, id: %x, seq: %x\n", icmp_ptr->icmp_type, icmp_ptr->icmp_code, icmp_ptr->icmp_id, icmp_ptr->icmp_seq);
@@ -547,12 +552,14 @@ void* proto4(void* arg) {
         }
 
         // update number of pings left to send
+        pthread_mutex_lock(&ping_count_lock);
         if ( set_pings && num_pings > 0 ) {
             num_pings--;
             if ( num_pings == 0 ) {
                 break;
             }
         }
+        pthread_mutex_unlock(&ping_count_lock);
 
         // wait specified number of seconds
         sleep(sec_delay);
