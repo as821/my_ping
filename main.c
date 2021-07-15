@@ -1,6 +1,6 @@
 /*
  *
- *      Andrew Stange, Cloudflare Internship Application: Systems
+ *      Andrew Stange
  *      Developed for MacOS (using C)
  *
  *      Usage:
